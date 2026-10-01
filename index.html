@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Understanding Mamba-3 Through Oscillatory Dynamics</title>
+  <meta name="author" content="Shutian Liang, Yue Song">
+  <meta property="og:title" content="Understanding Mamba-3 Through Oscillatory Dynamics">
+  <!-- <meta property="og:description" content="Memory has a direction. We investigate how learned phase shapes recurrent computation in Mamba-3."> -->
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="static/mamba/teaser.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="assets/stylesheets/mamba-base.css">
+  <link rel="stylesheet" href="assets/fontawesome-free-7.2.0-web/css/all.min.css">
+  <link rel="stylesheet" href="assets/stylesheets/mamba.css">
+  <script defer src="assets/scripts/mamba.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#blog-main">Skip to article</a>
+<header class="container blog hero" id="top">
+  <div class="blog-title no-cover">
+    <h1 class="title">Understanding <span class="model-name">Mamba-3</span><br>Through Oscillatory Dynamics</h1>
+    <p class="author"><a href="https://github.com/Shutian-Liang" target="_blank" rel="noopener noreferrer">Shutian Liang</a>, <a href="https://kingjamessong.github.io/" target="_blank" rel="noopener noreferrer">Yue Song</a><sup>*</sup></p>
+    <p class="affiliation">College of AI, Tsinghua University</p>
+    <p class="corresponding">* Denotes corresponding author.</p>
+    <div class="info">
+      <a class="button primary" href="assets/papers/understanding-mamba3.pdf">Paper <i class="fa-solid fa-file-pdf" aria-hidden="true"></i></a>
+      <a class="button" href="https://github.com/Shutian-Liang/understandingmamba3">Code <i class="fa-brands fa-github" aria-hidden="true"></i></a>
+    </div>
+  </div>
+</header>
+<main id="blog-main">
+  <section class="container blog main opening" aria-label="Overview">
+    <h2>Introduction</h2>
+    <p class="text">
+      Mamba-3 introduces input-dependent rotations into recurrent state updates, but
+      their contribution beyond state retention remains unclear. 
+      <strong>We interpret these rotations as underdamped second-order dynamics, 
+      providing a framework for investigating the role of oscillation in sequence modeling.</strong>
+    </p>
+    
+    <!-- <p class="text">Decay determines how much of a recurrent state survives. <strong>Phase determines how that state is oriented when it interacts with new information.</strong> Our study connects Mamba-3's learned rotations to underdamped dynamics and investigates why this extra degree of freedom matters.</p> -->
+    <p class="text">
+      Through controlled comparisons, 
+      we find that underdamped dynamics outperform non-oscillatory damping regimes on 
+      state-tracking tasks, and that adapting phase to incoming tokens matters for these tasks. 
+      In pretrained language models, 
+      removing phase affects context-dependent prediction on LAMBADA much more strongly than factual relation prediction. 
+      Pretraining models with and without oscillation at 187M and 444M parameters shows lower long-context perplexity with oscillation at both scales, with improved average downstream scores at 444M and comparable performance at 187M. 
+      Finally, phase interventions and state measurements suggest that learned rotations regulate how retained history combines with new updates, 
+      while compatible phase coordinates between writing and readout support accurate prediction. 
+      Together, these results identify oscillation as a useful mechanism for recurrent computation beyond state retention.
+    </p>
+
+    <p class="text">
+      Oscillatory dynamics are not brand new to sequence modeling: prior work has
+      explored second-order and oscillatory recurrent systems. This post focuses
+      on our findings about what oscillation contributes in Mamba-3, rather than
+      offering a comprehensive review of related work. We will discuss earlier
+      approaches and their connections in a separate blog post
+      (if there's no link here yet, I'm still writing it 😂 — apologies for any
+      relevant work not acknowledged here!).
+      We hope this blog leaves you with two takeaways:
+    </p>
+    <ul class="takeaways">
+      <li>
+        <strong>Oscillation can support state tracking and long-context prediction
+        by shaping how information evolves, accumulates, and is read out.</strong>
+        Mamba-3's input-dependent rotations provide one way to realize
+        underdamped state dynamics.
+      </li>
+      <li>
+        <strong>Oscillatory dynamics offer a useful design perspective for
+        recurrent sequence models, including SSMs and linear attention.</strong>
+        Their broader benefits remain a question for further investigation.
+      </li>
+    </ul>
+
+    <!-- <p class="text">
+      <strong>Perhaps it is time to go back to dynamics.</strong>
+      Rather than viewing recurrent transitions only as architectural
+      parameterizations(what to memorize what to forget), we can ask what state dynamics they realize and
+      which dynamics are useful for computation. Differential equations
+      provide a natural language for making this perspective explicit.
+    </p> -->
+
+    <figure class="wide">
+      <a href="static/mamba/teaser.png" aria-label="Open the transition geometry figure at full resolution"><img src="static/mamba/teaser.png" alt="Mamba-2 contracts a state toward the origin; Mamba-3 adds rotation, creating a spiral and damped oscillations." fetchpriority="high"></a>
+      <figcaption>From contraction to oscillation. Under fixed coefficients, Mamba-2's decay preserves the direction of a state, while Mamba-3's decay–rotation transition can change it.</figcaption>
+    </figure>
+  </section>
+
+  <section class="container blog main" id="intuition">
+    <h2>Oscillatory Dynamics: An Intuition</h2>
+    <p class="text">To understand what rotation contributes, we first separate the amount of retained information from its direction.</p>
+    <p class="text">A recurrent model compresses a growing sequence into a fixed-size state. Much of the discussion around this memory focuses on retention: what enters the state, what gets forgotten, and how long a signal survives. But two states can have exactly the same magnitude and still point in different directions. That difference can change how the next update combines with the past.</p>
+    <p class="text">Mamba-3 introduces input-dependent rotations into its recurrent transitions. Imagine an arrow representing a pair of state coordinates. Decay shortens the arrow; rotation turns it. Repeated decay produces contraction. Repeated decay and rotation produce a spiral. Our question is whether this turning motion contributes something useful beyond retention.</p>
+    <div class="explorer">
+      <div class="explorer-heading"><h3>Same retention, different direction</h3><span class="tag">Interactive intuition</span></div>
+      <p class="explainer">Both trajectories start at (1, 0) and take 80 steps with the same decay. Adjust the angle to see how the path changes while its final magnitude stays the same.</p>
+      <canvas id="rotation-demo" width="640" height="430" role="img" aria-label="A blue decay trajectory and an orange rotating trajectory with equal retention. Both end at the same distance from the origin."></canvas>
+      <div class="legend"><span><i class="swatch blue"></i>Decay only</span><span><i class="swatch orange"></i>Decay + rotation</span></div>
+      <div class="controls">
+        <label for="angle">Rotation per step <output id="angle-value" for="angle">12°</output><input id="angle" type="range" min="0" max="30" step="1" value="12"></label>
+        <label for="retention">Retention per step <output id="retention-value" for="retention">0.980</output><input id="retention" type="range" min="0.94" max="0.995" step="0.001" value="0.98"></label>
+      </div>
+      <p id="demo-status" class="demo-status" aria-live="polite">Both final state magnitudes: 0.199.</p>
+      <p class="small-note">An illustrative homogeneous system with fixed coefficients, no input injection, and no learned parameters. This is a geometric demonstration, not an experimental result from Mamba-3.</p>
+      <noscript><p class="small-note">Enable JavaScript to explore the trajectories. The figure above shows the same geometric distinction.</p></noscript>
+    </div>
+  </section>
+
+  <section class="container blog main" id="dynamics">
+    <h2>A rotating state is a damped oscillator</h2>
+    <p class="text">For one rotary state pair, the homogeneous update has a simple form:</p>
+    <div class="equation" aria-label="z at t plus one equals rho t times R of theta t times z t"><var>z</var><sub>t+1</sub> = <var>ρ</var><sub>t</sub> R(<var>θ</var><sub>t</sub>) <var>z</var><sub>t</sub></div>
+    <p class="text">Here, <var>ρ</var> is the retention factor and R(<var>θ</var>) is a two-dimensional rotation. Over an interval of length Δ, let <var>a</var> = −log(<var>ρ</var>)/Δ and <var>ν</var> = <var>θ</var>/Δ. Holding these coefficients fixed within that interval, the discrete transition is the exact flow of a continuous decay–rotation system. Its first coordinate obeys:</p>
+    <div class="equation" aria-label="H double dot plus two a H dot plus a squared plus nu squared times H equals zero">Ḧ + 2<var>a</var>Ḣ + (<var>a</var><sup>2</sup> + <var>ν</var><sup>2</sup>)H = 0</div>
+    <p class="text">This is a second-order damped oscillator. When <var>a</var> &gt; 0 and <var>ν</var> ≠ 0, its damping ratio is between zero and one: the system is <strong>underdamped</strong>. Decay sets the envelope; phase sets the oscillation. The equivalence is interval-wise and concerns the homogeneous transition, not a claim that the entire input-driven model is a single fixed oscillator.</p>
+  </section>
+
+  <section class="container blog main" id="tracking">
+    <h2>State Tracking: Testing Input-Dependent Oscillation</h2>
+    <p class="text">The oscillator interpretation motivates a controlled test. If oscillation itself is useful, it should help when we hold the state structure fixed and train different damping regimes on the same tasks.</p>
+    <p class="text">Parity is a simple example. Each incoming 1 toggles the answer between two states; 0 leaves it unchanged. Counting ones modulo three requires a three-state cycle. A rotation can encode those transitions directly: approximately 180° for parity, or 120° for mod-3.</p>
+    <figure><a href="static/mamba/phase-tasks.png" aria-label="Open the task-aligned phase figure"><img src="static/mamba/phase-tasks.png" loading="lazy" alt="Selected state pairs rotate by about 180 degrees on input one for parity and about 120 degrees for mod-3; input zero barely changes their phase."></a><figcaption>Selected learned state pairs show approximately task-aligned phase increments. For parity, input 1 induces 179.51°; for mod-3, 119.78°. These examples do not imply that every state pair implements the same code.</figcaption></figure>
+    <p class="text">We compare underdamped, critically damped, and overdamped variants within a shared second-order framework. The underdamped variant outperforms the non-oscillatory alternatives on all three state-tracking tasks. The gap is especially pronounced on Parity and Mod 3; on Arithmetic without Brackets, underdamped dynamics achieve 95.68% scaled accuracy, compared with 81.60% for the overdamped variant.</p>
+    <div class="table-wrapper" role="region" aria-label="State-tracking results" tabindex="0"><table>
+      <caption>Scaled accuracy (%) on state-tracking tasks. Higher is better.</caption>
+      <thead><tr><th scope="col">Dynamics</th><th scope="col">Parity</th><th scope="col">Mod-3</th><th scope="col">Arithmetic<br>without brackets</th></tr></thead>
+      <tbody><tr><th scope="row">Overdamped</th><td>3.27</td><td>0.58</td><td>81.60</td></tr><tr><th scope="row">Critically damped</th><td>3.22</td><td>0.32</td><td>1.97</td></tr><tr class="highlight"><th scope="row">Underdamped (Mamba-3)</th><td><strong>100.00</strong></td><td><strong>95.26</strong></td><td><strong>95.68</strong></td></tr></tbody>
+    </table></div>
+    <p class="small-note">Models are evaluated at sequence length 224 after a training curriculum whose maximum length grows to 160. These are scaled accuracies, not raw accuracy percentages.</p>
+    <p class="text">The rotation comparisons further show that data dependence matters: Mamba-3 substantially outperforms variants with fixed or removed rotations across all three tasks. Effective state tracking benefits from both oscillatory dynamics and the ability to adapt phase to incoming tokens.</p>
+    <aside class="finding paper-finding"><p><strong>Main Findings: Oscillation supports effective state tracking when its phase adapts to incoming information.</strong></p><p>Underdamped dynamics outperform critically damped and overdamped alternatives, while data-dependent rotations outperform fixed rotations.</p></aside>
+  </section>
+
+  <section class="container blog main" id="phase">
+    <h2>Phase Removal: Context-Dependent Prediction</h2>
+    <p class="text">Having tested input-dependent oscillation on state tracking, we next ask where language models rely on learned phase. We intervene in official pretrained 1.5B Mamba-3 models. Setting the phase to zero within consecutive layer windows lets us compare two tasks: factual relation prediction on Relation and context-dependent word prediction on LAMBADA. The contrast reveals where the model relies on its learned rotations.</p>
+    <figure class="narrow"><a href="static/mamba/task-intervention.png" aria-label="Open the phase-removal task comparison"><img src="static/mamba/task-intervention.png" loading="lazy" alt="Heatmaps of accuracy changes under phase removal: LAMBADA is more strongly affected than factual relation prediction."></a><figcaption>Removing phase in contiguous layer windows affects context-dependent LAMBADA prediction much more strongly than factual relation prediction.</figcaption></figure>
+    <aside class="finding paper-finding"><p><strong>Main Findings: Learned oscillations are particularly important for context-dependent prediction.</strong></p><p>Removing phase rotation has only a modest effect on factual relation prediction but substantially degrades performance on LAMBADA, which requires integrating information across the preceding context.</p></aside>
+  </section>
+
+  <section class="container blog main" id="context">
+    <h2>Pretraining and Long-Context Generalization</h2>
+    <p class="text">Phase removal reveals reliance in an already-trained model. To test whether oscillation also helps when models learn from scratch, we train Mamba-3 MIMO variants with and without oscillation from scratch at 187M and 444M parameters. Each model sees 100B FineWeb-Edu tokens at a 2K training context. We then test whether the models can use longer contexts, including PG-19 windows up to 64K.</p>
+    <div class="results-switcher dataset-switcher" hidden role="tablist" aria-label="Length generalization datasets">
+      <button type="button" id="datasets-tab" role="tab" aria-controls="datasets-panel" aria-selected="true" tabindex="0"><span class="result-dot" aria-hidden="true"></span><span>Across datasets</span></button>
+      <button type="button" id="training-187-tab" role="tab" aria-controls="training-187-panel" aria-selected="false" tabindex="-1"><span class="result-dot" aria-hidden="true"></span><span>PG-19 · 187M training</span></button>
+      <button type="button" id="training-444-tab" role="tab" aria-controls="training-444-panel" aria-selected="false" tabindex="-1"><span class="result-dot" aria-hidden="true"></span><span>PG-19 · 444M training</span></button>
+    </div>
+    <div id="datasets-panel">
+      <h3 class="results-heading" id="other-dataset-results">Length generalization across datasets</h3>
+      <figure class="dataset-figure" id="pg19-results">
+        <div class="dataset-comparison-scroll" role="region" aria-label="PG-19 and four additional datasets; scroll horizontally on small screens" tabindex="0">
+          <div class="dataset-comparison">
+            <a href="static/mamba/long-context.png" aria-label="Open PG-19 length-generalization results"><img src="static/mamba/long-context.png" loading="lazy" alt="PG-19 perplexity for 187M and 444M models, at context lengths from 1K to 64K."></a>
+            <a href="static/mamba/other-datasets.png" aria-label="Open CodeParrot, MATH-Hard, TriviaQA and SlimPajama results"><img src="static/mamba/other-datasets.png" loading="lazy" alt="CodeParrot, MATH-Hard, TriviaQA and SlimPajama perplexity for 187M and 444M models, at context lengths from 1K to 4K."></a>
+          </div>
+        </div>
+        <figcaption>Length generalization on PG-19, CodeParrot, MATH-Hard, TriviaQA, and SlimPajama. Top row: 187M; bottom row: 444M. Blue: without oscillation; orange: with oscillation. Dotted lines mark the 2K training context. <strong>PG-19 is evaluated up to 64K; the other datasets up to 4K.</strong> Scroll horizontally on smaller screens, or click a plot to enlarge.</figcaption>
+      </figure>
+      <p class="text">Oscillatory variants achieve lower PG-19 perplexity beyond the training context at both scales. At 187M, they also have lower perplexity on CodeParrot, TriviaQA, and SlimPajama, but higher perplexity on MATH-Hard. At 444M, they have lower perplexity on all four additional datasets across the evaluated lengths. The differences beyond 2K are most apparent on CodeParrot and TriviaQA, while those on SlimPajama remain small.</p>
+    </div>
+    <div id="training-187-panel">
+      <h3 class="results-heading" id="pg19-training-187">PG-19 throughout pretraining · 187M</h3>
+      <figure class="training-figure">
+        <a href="static/mamba/pg19-training-187m.png" aria-label="Open PG-19 training trajectories for the 187M model"><img src="static/mamba/pg19-training-187m.png" loading="lazy" alt="PG-19 perplexity across training checkpoints for Mamba-3 187M, with and without oscillation, evaluated at context lengths 2K, 8K, 16K, 32K and 64K."></a>
+        <figcaption>PG-19 perplexity across training checkpoints at 2K, 8K, 16K, 32K, and 64K context lengths. Blue: without oscillation; orange: with oscillation. Click the figure to enlarge.</figcaption>
+      </figure>
+      <p class="text">At the end of training, the oscillatory variant achieves lower perplexity at every evaluated context length. The separation is more pronounced at longer contexts, particularly for the 444M model at 16K–64K.</p>
+    </div>
+    <div id="training-444-panel">
+      <h3 class="results-heading" id="pg19-training-444">PG-19 throughout pretraining · 444M</h3>
+      <figure class="training-figure">
+        <a href="static/mamba/pg19-training-444m.png" aria-label="Open PG-19 training trajectories for the 444M model"><img src="static/mamba/pg19-training-444m.png" loading="lazy" alt="PG-19 perplexity across training checkpoints for Mamba-3 444M, with and without oscillation, evaluated at context lengths 2K, 8K, 16K, 32K and 64K."></a>
+        <figcaption>PG-19 perplexity across training checkpoints at 2K, 8K, 16K, 32K, and 64K context lengths. Blue: without oscillation; orange: with oscillation. Click the figure to enlarge.</figcaption>
+      </figure>
+      <p class="text">At the end of training, the oscillatory variant achieves lower perplexity at every evaluated context length. The separation is more pronounced at longer contexts, particularly for the 444M model at 16K–64K.</p>
+    </div>
+  </section>
+
+  <section class="container blog main" id="benchmarks">
+    <h2>Language Experimental Results</h2>
+    <div class="results-switcher" id="results-switcher" hidden role="tablist" aria-label="Experimental results">
+      <button type="button" id="language-tab" title="Language results" role="tab" aria-controls="language-panel" aria-selected="true" tabindex="0"><span class="result-dot" aria-hidden="true"></span><span class="sr-only">Language</span></button>
+      <button type="button" id="longbench-tab" title="LongBench-E results" role="tab" aria-controls="longbench-panel" aria-selected="false" tabindex="-1"><span class="result-dot" aria-hidden="true"></span><span class="sr-only">LongBench-E</span></button>
+    </div>
+    <div id="language-panel">
+    <h3 class="results-heading" id="language-results">Standard language modeling and downstream evaluation</h3>
+    <p class="text">Both oscillatory variants achieve lower FineWeb-Edu and LAMBADA perplexity. The reported average downstream accuracy remains comparable at 187M (43.43 with oscillation versus 43.63 without) and improves at 444M (51.08 versus 50.18).</p>
+    <p class="small-note">↓ means lower is better; ↑ means higher is better. Accuracy values are percentages; normalized accuracy corresponds to acc_n in the paper. Bold marks the better result within each model size. On narrow screens, scroll the table horizontally.</p>
+    <div class="table-wrapper benchmark-results" role="region" aria-label="Standard evaluation after pretraining on 100B FineWeb-Edu tokens." tabindex="0"><table id="language-results-table">
+<caption>Standard evaluation after pretraining on 100B FineWeb-Edu tokens.</caption>
+<thead><tr><th scope="col" rowspan="2">Model / dynamics</th><th scope="colgroup" colspan="2">Language modeling</th><th scope="colgroup" colspan="7">Downstream evaluation</th><th scope="colgroup" colspan="1">Aggregate</th></tr><tr><th scope="col" title="FineWeb-Edu · perplexity ↓">FineWeb-Edu<br>PPL ↓</th><th scope="col" title="LAMBADA · perplexity ↓">LAMBADA<br>PPL ↓</th><th scope="col" title="LAMBADA · accuracy ↑">LAMBADA<br>Acc. ↑</th><th scope="col" title="HellaSwag · normalized accuracy ↑">HellaSwag<br>Acc_n ↑</th><th scope="col" title="PIQA · accuracy ↑">PIQA<br>Acc. ↑</th><th scope="col" title="ARC-Easy · accuracy ↑">ARC-Easy<br>Acc. ↑</th><th scope="col" title="ARC-Challenge · normalized accuracy ↑">ARC-Challenge<br>Acc_n ↑</th><th scope="col" title="WinoGrande · accuracy ↑">WinoGrande<br>Acc. ↑</th><th scope="col" title="OpenBookQA · accuracy ↑">OpenBookQA<br>Acc. ↑</th><th scope="col" title="Reported average accuracy ↑">Avg.<br>Acc. ↑</th></tr></thead>
+<tbody>
+<tr><th scope="row">187M · w/o oscillation</th><td>16.32</td><td>38.04</td><td>31.73</td><td>40.86</td><td><strong>67.41</strong></td><td>60.73</td><td><strong>28.84</strong></td><td><strong>53.83</strong></td><td>22.00</td><td><strong>43.63</strong></td></tr>
+<tr><th scope="row">187M · w/ oscillation</th><td><strong>16.18</strong></td><td><strong>32.97</strong></td><td><strong>33.59</strong></td><td><strong>41.24</strong></td><td>67.03</td><td><strong>61.28</strong></td><td>25.85</td><td>51.62</td><td><strong>23.40</strong></td><td>43.43</td></tr>
+<tr><th scope="row">444M · w/o oscillation</th><td>12.68</td><td>18.38</td><td>41.01</td><td>52.40</td><td>70.62</td><td>69.02</td><td>32.94</td><td><strong>57.06</strong></td><td><strong>28.20</strong></td><td>50.18</td></tr>
+<tr><th scope="row">444M · w/ oscillation</th><td><strong>12.60</strong></td><td><strong>17.19</strong></td><td><strong>42.83</strong></td><td><strong>52.65</strong></td><td><strong>71.65</strong></td><td><strong>70.45</strong></td><td><strong>35.15</strong></td><td>56.83</td><td>28.00</td><td><strong>51.08</strong></td></tr>
+</tbody></table></div>
+    </div>
+    <div id="longbench-panel">
+    <h3 class="results-heading" id="longbench-results">LongBench-E: the full task breakdown</h3>
+    <p class="text">On LongBench-E, the variants perform comparably at 187M, scoring 9.53 with oscillation and 9.76 without. At 444M, oscillation increases the average score from 10.61 to <strong>13.22</strong>. These results distinguish the improvements in language-modeling perplexity observed at both scales from the downstream gains observed at 444M.</p>
+    <p class="small-note">Higher is better for every task; bold marks the better result within each model size. Task abbreviations follow the paper; full names are listed below the table. Scroll horizontally to view all columns on smaller screens. The aggregate scores are reproduced as reported in the manuscript.</p>
+    <div class="table-wrapper benchmark-results" role="region" aria-label="LongBench-E results across all 13 tasks, grouped by task family." tabindex="0"><table id="longbench-results-table">
+<caption>LongBench-E results across all 13 tasks, grouped by task family.</caption>
+<thead><tr><th scope="col" rowspan="2">Model / dynamics</th><th scope="colgroup" colspan="2">Synthetic</th><th scope="colgroup" colspan="2">Summary</th><th scope="colgroup" colspan="2">Single-doc QA</th><th scope="colgroup" colspan="2">Multi-doc QA</th><th scope="colgroup" colspan="3">Few-shot learning</th><th scope="colgroup" colspan="2">Coding</th><th scope="colgroup" colspan="1">Aggregate</th></tr><tr><th scope="col" title="Passage Count">PC</th><th scope="col" title="Passage Retrieval-en">PR</th><th scope="col" title="GovReport">GR</th><th scope="col" title="MultiNews">MN</th><th scope="col" title="MultiFieldQA-en">MQA</th><th scope="col" title="Qasper">QA</th><th scope="col" title="2WikiMQA">2WM</th><th scope="col" title="HotpotQA">HQA</th><th scope="col" title="SAMSum">SS</th><th scope="col" title="TREC">TR</th><th scope="col" title="TriviaQA">TQA</th><th scope="col" title="Long Code Completion">LCC</th><th scope="col" title="RepoBench-P">RB</th><th scope="col" title="Reported average score">Avg.</th></tr></thead>
+<tbody>
+<tr><th scope="row">187M · w/o oscillation</th><td><strong>5.96</strong></td><td>6.07</td><td>7.75</td><td>9.17</td><td>9.62</td><td><strong>4.37</strong></td><td><strong>6.71</strong></td><td><strong>5.24</strong></td><td>7.87</td><td><strong>12.67</strong></td><td>10.63</td><td><strong>20.25</strong></td><td><strong>20.57</strong></td><td><strong>9.76</strong></td></tr>
+<tr><th scope="row">187M · w/ oscillation</th><td>5.56</td><td><strong>6.64</strong></td><td><strong>8.93</strong></td><td><strong>9.25</strong></td><td><strong>10.02</strong></td><td>4.13</td><td>6.25</td><td>4.34</td><td><strong>9.02</strong></td><td>8.67</td><td><strong>12.47</strong></td><td>18.32</td><td>20.36</td><td>9.53</td></tr>
+<tr><th scope="row">444M · w/o oscillation</th><td><strong>5.96</strong></td><td><strong>7.19</strong></td><td>8.37</td><td><strong>10.52</strong></td><td>10.71</td><td><strong>5.28</strong></td><td>7.29</td><td>5.13</td><td>10.36</td><td>11.00</td><td>19.29</td><td>19.58</td><td>17.19</td><td>10.61</td></tr>
+<tr><th scope="row">444M · w/ oscillation</th><td>3.57</td><td>5.95</td><td><strong>8.50</strong></td><td>10.23</td><td><strong>11.38</strong></td><td>5.06</td><td><strong>8.79</strong></td><td><strong>5.95</strong></td><td><strong>19.61</strong></td><td><strong>18.33</strong></td><td><strong>21.56</strong></td><td><strong>28.58</strong></td><td><strong>24.31</strong></td><td><strong>13.22</strong></td></tr>
+</tbody></table></div>
+    <p class="small-note benchmark-key">PC: Passage Count; PR: Passage Retrieval-en; GR: GovReport; MN: MultiNews; MQA: MultiFieldQA-en; QA: Qasper; 2WM: 2WikiMQA; HQA: HotpotQA; SS: SAMSum; TR: TREC; TQA: TriviaQA; LCC: Long Code Completion; RB: RepoBench-P.</p>
+    </div>
+    <aside class="finding paper-finding"><p><strong>Main Findings: Oscillation improves length generalization, with greater downstream benefits at the larger model scale.</strong></p><p>Models with oscillation achieve lower long-context perplexity at both scales. Downstream scores improve at 444M and remain comparable at 187M.</p></aside>
+  </section>
+
+  <section class="container blog main" id="interventions">
+    <h2>Long-Context Phase Interventions</h2>
+    <p class="text">The pretraining results establish the benefits of oscillation under controlled training. We now return to pretrained 1.5B models to examine how prediction depends on the structure of their learned phase.</p>
+    <p class="text">On long-context PG-19, we remove phase, reverse its direction, or shuffle phase increments across rotary pairs. Shuffling preserves the set of increments at each head and token, but changes which state pair receives each one. This tests whether the assignment of phase to state coordinates matters.</p>
+    <div class="table-wrapper" role="region" aria-label="Phase interventions at 64K context" tabindex="0"><table>
+      <caption>PG-19 perplexity at 64K context. Lower is better; parentheses show the ratio to the native model.</caption>
+      <thead><tr><th scope="col">Intervention</th><th scope="col">1.5B SISO</th><th scope="col">1.5B MIMO</th></tr></thead>
+      <tbody><tr><th scope="row">Native model</th><td>20.60</td><td>20.52</td></tr><tr><th scope="row">Decay permutation</th><td>125.27 (6.08×)</td><td>24.89 (1.21×)</td></tr><tr><th scope="row">Phase shuffle</th><td>149.37 (7.25×)</td><td>65.72 (3.20×)</td></tr><tr><th scope="row">Phase removal</th><td>851.49 (41.33×)</td><td>309.36 (15.08×)</td></tr><tr><th scope="row">Phase reversal</th><td>1526.52 (74.10×)</td><td>73.89 (3.60×)</td></tr></tbody>
+    </table></div>
+    <p class="small-note">SISO and MIMO denote single-input/single-output and multi-input/multi-output variants. Interventions act across all layers and heads throughout each sampled window; evaluation scores its final 100 tokens.</p>
+    <p class="text">These models rely on specific learned phase trajectories. Removing, reversing, or reassigning phase substantially worsens prediction, although the sensitivity differs across SISO and MIMO. The particularly large SISO reversal effect should not be generalized to every architecture or intervention.</p>
+    <p class="text">These interventions reveal how pretrained models rely on learned phase. Models trained without oscillation can still extrapolate stably, so this reliance should not be confused with a universal requirement for oscillation.</p>
+  </section>
+
+  <section class="container blog main" id="accumulation">
+    <h2>State Accumulation: How Phase Changes Memory</h2>
+    <p class="text">The decay–rotation view suggests a mechanism: turning retained history changes how it combines with a new update. We examine how phase affects the combination of retained history and incoming updates using their cosine similarity and the RMS norm of the recurrent state. Larger cosine similarity indicates stronger directional alignment, favoring constructive accumulation; the RMS norm measures the resulting state magnitude.</p>
+    <div class="table-wrapper" role="region" aria-label="Hidden-state accumulation statistics on PG-19" tabindex="0"><table id="accumulation-results-table">
+      <caption>Hidden-state statistics on PG-19. Native: learned phase; Remove: phase rotation removed.</caption>
+      <thead><tr><th scope="col" rowspan="2">Model / context</th><th scope="colgroup" colspan="2">History–update cosine similarity</th><th scope="colgroup" colspan="2">State RMS norm</th></tr><tr><th scope="col">Native</th><th scope="col">Remove</th><th scope="col">Native</th><th scope="col">Remove</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">SISO · 16K</th><td>0.293</td><td>0.429</td><td>7.635</td><td>8.899</td></tr>
+        <tr><th scope="row">SISO · 64K</th><td>0.294</td><td>0.474</td><td>7.621</td><td>9.437</td></tr>
+        <tr><th scope="row">MIMO · 16K</th><td>0.241</td><td>0.488</td><td>10.073</td><td>12.022</td></tr>
+        <tr><th scope="row">MIMO · 64K</th><td>0.242</td><td>0.499</td><td>10.078</td><td>12.047</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small-note">Removing phase increases both alignment and state magnitude at both context lengths in both models. These are state statistics, rather than accuracy scores.</p>
+    <p class="text">The state measurements are consistent with this interpretation. At 64K in SISO, removing phase increases history–update cosine similarity from 0.294 to 0.474 and the RMS state norm from 7.621 to 9.437. MIMO shows the same qualitative pattern. These observations suggest that learned phase moderates constructive accumulation. They do not, by themselves, prove that state magnitude is the cause of every prediction error.</p>
+    <p class="text">Writing and reading also need compatible phase coordinates. When we remove rotations only during the final 100 prediction steps, removing them from either the write vector or the readout vector hurts much more than removing them from both. Joint removal partly restores performance, but does not recover the native model. The preceding context was processed with native phases, so changing both sides still creates a mismatch with the accumulated state.</p>
+    <div class="table-wrapper" role="region" aria-label="Writing and readout phase consistency on PG-19" tabindex="0"><table id="readout-results-table">
+      <caption>PG-19 perplexity at 64K under phase removal during the final 100 tokens. Lower is better.</caption>
+      <thead><tr><th scope="col">Intervention</th><th scope="col">1.5B SISO</th><th scope="col">1.5B MIMO</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Native</th><td><strong>20.60</strong></td><td><strong>20.52</strong></td></tr>
+        <tr><th scope="row">Remove B (writing)</th><td>186.28 (9.04×)</td><td>100.41 (4.89×)</td></tr>
+        <tr><th scope="row">Remove C (readout)</th><td>250.90 (12.18×)</td><td>117.68 (5.74×)</td></tr>
+        <tr><th scope="row">Remove both</th><td>42.79 (2.08×)</td><td>59.46 (2.90×)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small-note">Parentheses give perplexity relative to the native model. Interventions apply across all layers during the final 100 tokens; the preceding context uses native phase.</p>
+    <aside class="finding paper-finding"><p><strong>Main Findings: Learned phase regulates how information accumulates and is accessed over long contexts.</strong></p><p>Disrupting phase degrades prediction, while removing rotation increases alignment and accumulation of old and new information. Consistent phase between writing and readout also matters for accurate prediction.</p></aside>
+  </section>
+
+<section class="container blog main" id="takeaways">
+  <h2>Discussion</h2>
+
+  <p class="text">
+    The dynamical perspective separates two roles that are easy to conflate in
+    recurrent models. Decay determines how much of the past persists, while
+    phase determines how that retained state evolves in direction and interacts
+    with new information. In our experiments, this distinction helps explain why
+    underdamped dynamics can support both state tracking and long-context prediction.
+  </p>
+
+  <p class="text">
+    At the same time, these results have clear limits. The oscillator
+    interpretation applies locally to frozen-coefficient transitions, and the
+    benefits of learned rotation are not uniform across every model scale, task,
+    or architecture. Oscillation should therefore be viewed as one useful
+    dynamical mechanism, rather than a universal recipe for better memory.
+  </p>
+
+  <p class="text">
+    The broader question is what other forms of state dynamics may be useful for
+    sequence computation. Linear-attention and recurrent architectures already
+    realize a range of spectral and dynamical regimes, including oscillatory ones.
+    Instead of treating these transition rules as isolated architectural tricks,
+    we can ask what dynamics they implement, what computations those dynamics
+    enable, and how to design them deliberately.
+  </p>
+
+  <p class="text closing-thought">
+    <strong>Perhaps it is time to go back to dynamics.</strong>
+    Differential equations give us a natural language for reasoning about how internal 
+    states evolve, and may offer a useful starting point for designing future SSMs, 
+    linear-attention models, and recurrent architectures.
+  </p>
+</section>
+</main>
+<footer class="container blog"><p>Built with the <a href="https://shikun.io/projects/clarity">Clarity Template</a> by <a href="https://shikun.io/">Shikun Liu</a>. Template modifications are shared under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>.</p></footer>
+</body>
+</html>
