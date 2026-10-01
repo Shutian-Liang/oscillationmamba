@@ -169,7 +169,7 @@
         <a href="static/mamba/pg19-training-187m.png" aria-label="Open PG-19 training trajectories for the 187M model"><img src="static/mamba/pg19-training-187m.png" loading="lazy" alt="PG-19 perplexity across training checkpoints for Mamba-3 187M, with and without oscillation, evaluated at context lengths 2K, 8K, 16K, 32K and 64K."></a>
         <figcaption>PG-19 perplexity across training checkpoints at 2K, 8K, 16K, 32K, and 64K context lengths. Blue: without oscillation; orange: with oscillation. Click the figure to enlarge.</figcaption>
       </figure>
-      <p class="text">At the end of training, the oscillatory variant achieves lower perplexity at every evaluated context length. The separation is more pronounced at longer contexts, particularly for the 444M model at 16K–64K.</p>
+      <p class="text">At the end of training, the oscillatory variant achieves lower perplexity at every evaluated context length, with the gap generally becoming more visible at longer contexts.</p>
     </div>
     <div id="training-444-panel">
       <h3 class="results-heading" id="pg19-training-444">PG-19 throughout pretraining · 444M</h3>
@@ -177,12 +177,20 @@
         <a href="static/mamba/pg19-training-444m.png" aria-label="Open PG-19 training trajectories for the 444M model"><img src="static/mamba/pg19-training-444m.png" loading="lazy" alt="PG-19 perplexity across training checkpoints for Mamba-3 444M, with and without oscillation, evaluated at context lengths 2K, 8K, 16K, 32K and 64K."></a>
         <figcaption>PG-19 perplexity across training checkpoints at 2K, 8K, 16K, 32K, and 64K context lengths. Blue: without oscillation; orange: with oscillation. Click the figure to enlarge.</figcaption>
       </figure>
-      <p class="text">At the end of training, the oscillatory variant achieves lower perplexity at every evaluated context length. The separation is more pronounced at longer contexts, particularly for the 444M model at 16K–64K.</p>
+      <p class="text">At the end of training, the oscillatory variant achieves lower perplexity at every evaluated context length. The separation becomes substantially more pronounced at longer contexts, particularly from 16K to 64K.</p>
     </div>
   </section>
 
   <section class="container blog main" id="benchmarks">
-    <h2>Language Experimental Results</h2>
+    <h2>Does Oscillation Help Language Modeling?</h2>
+    <p class="text">Comparing models without and with oscillation:</p>
+    <ul class="benchmark-highlights">
+      <li><strong>187M:</strong> Lower perplexity; downstream performance roughly unchanged.</li>
+      <li><strong>444M:</strong> Lower perplexity; standard average accuracy 50.18 → 51.08.</li>
+      <li><strong>444M, LongBench-E:</strong> Average score 10.61 → 13.22.</li>
+    </ul>
+    <details class="full-benchmarks">
+      <summary>View full results: language benchmarks and LongBench-E</summary>
     <div class="results-switcher" id="results-switcher" hidden role="tablist" aria-label="Experimental results">
       <button type="button" id="language-tab" title="Language results" role="tab" aria-controls="language-panel" aria-selected="true" tabindex="0"><span class="result-dot" aria-hidden="true"></span><span class="sr-only">Language</span></button>
       <button type="button" id="longbench-tab" title="LongBench-E results" role="tab" aria-controls="longbench-panel" aria-selected="false" tabindex="-1"><span class="result-dot" aria-hidden="true"></span><span class="sr-only">LongBench-E</span></button>
@@ -216,6 +224,7 @@
 </tbody></table></div>
     <p class="small-note benchmark-key">PC: Passage Count; PR: Passage Retrieval-en; GR: GovReport; MN: MultiNews; MQA: MultiFieldQA-en; QA: Qasper; 2WM: 2WikiMQA; HQA: HotpotQA; SS: SAMSum; TR: TREC; TQA: TriviaQA; LCC: Long Code Completion; RB: RepoBench-P.</p>
     </div>
+    </details>
     <aside class="finding paper-finding"><p><strong>Main Findings: Oscillation improves length generalization, with greater downstream benefits at the larger model scale.</strong></p><p>Models with oscillation achieve lower long-context perplexity at both scales. Downstream scores improve at 444M and remain comparable at 187M.</p></aside>
   </section>
 

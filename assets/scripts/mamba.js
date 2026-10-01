@@ -65,6 +65,8 @@
     const target = document.getElementById(location.hash.slice(1));
     const index = panels.findIndex(panel => target && panel.contains(target));
     if (index < 0) return;
+    const disclosure = target.closest('details');
+    if (disclosure) disclosure.open = true;
     select(index);
     if (scroll) requestAnimationFrame(() => target.scrollIntoView({block: 'start'}));
   }
